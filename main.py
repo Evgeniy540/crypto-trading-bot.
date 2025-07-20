@@ -35,10 +35,10 @@ def kucoin_headers(endpoint, method="GET", body=""):
     signature = base64.b64encode(hmac.new(API_SECRET.encode(), str_to_sign.encode(), hashlib.sha256).digest())
     passphrase = base64.b64encode(hmac.new(API_SECRET.encode(), API_PASSPHRASE.encode(), hashlib.sha256).digest())
     return {
-        "KC-API-KEY": API_KEY,
+        "KC-API-KEY": 687a46d91cad950001b63f47,
         "KC-API-SIGN": signature,
         "KC-API-TIMESTAMP": now,
-        "KC-API-PASSPHRASE": passphrase,
+        "KC-API-PASSPHRASE": 198483,
         "KC-API-KEY-VERSION": "2",
         "Content-Type": "application/json"
     }
