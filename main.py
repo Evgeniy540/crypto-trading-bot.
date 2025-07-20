@@ -1,81 +1,111 @@
-import os
 import time
-import requests
 import hmac
 import base64
 import hashlib
+import requests
 import json
+import threading
 from flask import Flask
-from threading import Thread
-from datetime import datetime
-from kucoin.client import Trade
-from kucoin.client import Market
 
-# === Настройки ===
+# === CONFIG ===
 API_KEY = "687a46d91cad950001b63f47"
 API_SECRET = "3c7fad47-f000-4336-8162-3e2132b6372a"
 API_PASSPHRASE = "198484"
 TELEGRAM_TOKEN = "7630671081:AAG17gVyITruoH_CYreudyTBm5RTpvNgwMA"
 TELEGRAM_CHAT_ID = "5723086631"
-SYMBOLS = ["BTC-USDT", "ETH-USDT", "SOL-USDT", "GALA-USDT"]
+TRADE_SYMBOLS = ["BTC-USDT", "ETH-USDT", "SOL-USDT", "GALA-USDT"]
 TRADE_AMOUNT = 100
-COOLDOWN = {}
+COOLDOWN_SECONDS = 6 * 60 * 60
 
-# === Telegram уведомление ===
-def send_telegram(text):
+cooldown = {}
+
+# === UTILS ===
+
+def send_telegram(message):
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-    payload = {"chat_id": TELEGRAM_CHAT_ID, "text": text}
+    payload = {"chat_id": TELEGRAM_CHAT_ID, "text": message}
     try:
         requests.post(url, data=payload)
-    except Exception as e:
-        print(f"Ошибка Telegram: {e}")
+    except:
+        pass
 
-# === Стратегия на основе EMA ===
-def get_ema_signal(symbol):
-    client = Market()
-    klines = client.get_kline(symbol=symbol, kline_type="1hour", size=30)
-    closes = [float(k[2]) for k in klines]
-    ema9 = sum(closes[-9:]) / 9
-    ema21 = sum(closes[-21:]) / 21
-    return "buy" if ema9 > ema21 else "hold"
+def kucoin_headers(endpoint, method="GET", body=""):
+    now = str(int(time.time() * 1000))
+    str_to_sign = now + method + endpoint + body
+    signature = base64.b64encode(hmac.new(API_SECRET.encode(), str_to_sign.encode(), hashlib.sha256).digest())
+    passphrase = base64.b64encode(hmac.new(API_SECRET.encode(), API_PASSPHRASE.encode(), hashlib.sha256).digest())
+    return {
+        "KC-API-KEY": API_KEY,
+        "KC-API-SIGN": signature,
+        "KC-API-TIMESTAMP": now,
+        "KC-API-PASSPHRASE": passphrase,
+        "KC-API-KEY-VERSION": "2",
+        "Content-Type": "application/json"
+    }
 
-# === Торговля ===
-def execute_trade(symbol, action):
-    if COOLDOWN.get(symbol) and time.time() - COOLDOWN[symbol] < 21600:
-        return
+def get_price(symbol):
+    url = f"https://api.kucoin.com/api/v1/market/orderbook/level1?symbol={symbol}"
+    response = requests.get(url)
+    return float(response.json()["data"]["price"])
 
-    client = Trade(key=API_KEY, secret=API_SECRET, passphrase=API_PASSPHRASE, is_sandbox=False)
-    try:
-        order = client.create_market_order(symbol=symbol, side='buy', size=None, funds=str(TRADE_AMOUNT))
-        COOLDOWN[symbol] = time.time()
-        send_telegram(f"✅ Покупка {symbol} на {TRADE_AMOUNT} USDT. Ордер: {order['orderId']}")
-    except Exception as e:
-        send_telegram(f"❌ Ошибка покупки {symbol}: {e}")
+def get_ema(symbol, span):
+    url = f"https://api.kucoin.com/api/v1/market/candles?type=1hour&symbol={symbol}"
+    res = requests.get(url).json()
+    closes = [float(c[2]) for c in res["data"]][-span:]
+    return sum(closes) / len(closes)
 
-# === Основной цикл ===
+def place_order(symbol, side, size):
+    endpoint = "/api/v1/orders"
+    url = "https://api.kucoin.com" + endpoint
+    data = {
+        "clientOid": str(int(time.time() * 1000)),
+        "side": side,
+        "symbol": symbol,
+        "type": "market",
+        "funds": str(size)
+    }
+    headers = kucoin_headers(endpoint, "POST", json.dumps(data))
+    res = requests.post(url, headers=headers, json=data)
+    return res.json()
+
+# === TRADING LOOP ===
+
 def trade_loop():
     while True:
-        for symbol in SYMBOLS:
-            try:
-                signal = get_ema_signal(symbol)
-                if signal == "buy":
-                    execute_trade(symbol, signal)
-            except Exception as e:
-                print(f"Ошибка по {symbol}: {e}")
-        time.sleep(3600)
+        for symbol in TRADE_SYMBOLS:
+            now = time.time()
+            if cooldown.get(symbol, 0) > now:
+                continue
 
-# === Flask для Railway / UptimeRobot ===
+            try:
+                ema9 = get_ema(symbol, 9)
+                ema21 = get_ema(symbol, 21)
+                price = get_price(symbol)
+
+                if ema9 > ema21:
+                    order = place_order(symbol, "buy", TRADE_AMOUNT)
+                    if order.get("code") == "200000":
+                        send_telegram(f"✅ Куплено {symbol} по {price}\nEMA9={ema9:.2f} > EMA21={ema21:.2f}")
+                        cooldown[symbol] = now + COOLDOWN_SECONDS
+                    else:
+                        send_telegram(f"❌ Ошибка покупки {symbol}: {order}")
+                else:
+                    print(f"{symbol}: EMA9={ema9:.2f}, EMA21={ema21:.2f} — сигналов нет")
+            except Exception as e:
+                send_telegram(f"⚠️ Ошибка по {symbol}: {str(e)}")
+
+        time.sleep(300)  # Проверять каждые 5 минут
+
+# === FLASK KEEP-ALIVE ===
+
 app = Flask(__name__)
 
-@app.route("/")
+@app.route('/')
 def home():
-    return "✅ Бот работает!"
+    return "✅ Бот работает"
 
-# === Запуск ===
-def start():
-    Thread(target=trade_loop).start()
-    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
+# === START ===
 
-if __name__ == "__main__":
-    send_telegram("🤖 Бот запущен на Railway!")
-    start()
+if __name__ == '__main__':
+    threading.Thread(target=trade_loop).start()
+    app.run(host='0.0.0.0', port=3000)
