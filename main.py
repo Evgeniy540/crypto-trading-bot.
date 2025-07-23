@@ -1,112 +1,148 @@
 import time
 import hmac
-import base64
 import hashlib
+import base64
 import requests
 import json
-import threading
 from flask import Flask
+import threading
+from datetime import datetime
+import logging
 
-# === CONFIG ===
-API_KEY = "687a46d91cad950001b63f47"
-API_SECRET = "3c7fad47-f000-4336-8162-3e2132b6372a"
-API_PASSPHRASE = "198483"
+# === НАСТРОЙКИ ===
+KUCOIN_API_KEY = "687d0016c714e80001eecdbe"
+KUCOIN_API_SECRET = "d954b08b-7fbd-408e-a117-4e358a8a764d"
+KUCOIN_API_PASSPHRASE = "Evgeniy@84"
+TRADE_PASSWORD = "198483"  # Торговый пароль для вывода
+
 TELEGRAM_TOKEN = "7630671081:AAG17gVyITruoH_CYreudyTBm5RTpvNgwMA"
 TELEGRAM_CHAT_ID = "5723086631"
-TRADE_SYMBOLS = ["BTC-USDT", "ETH-USDT", "SOL-USDT", "GALA-USDT"]
-TRADE_AMOUNT = 100
-COOLDOWN_SECONDS = 6 * 60 * 60
 
-cooldown = {}
+TRADE_AMOUNT = 100  # USDT
+SYMBOLS = ["TRX/USDT", "GALA/USDT", "SOL/USDT", "BTC/USDT"]
+ARBITRAGE_THRESHOLD = 0.8  # % прибыли
+COOLDOWN = 60 * 60 * 3  # 3 часа
+last_trade_time = {}
 
-# === UTILS ===
-
+# === TELEGRAM ===
 def send_telegram(message):
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-    payload = {"chat_id": TELEGRAM_CHAT_ID, "text": message}
-    try:
-        requests.post(url, data=payload)
-    except:
-        pass
+    requests.post(url, data={"chat_id": TELEGRAM_CHAT_ID, "text": message})
 
-def kucoin_headers(endpoint, method="GET", body=""):
-    now = str(int(time.time() * 1000))
-    str_to_sign = now + method + endpoint + body
-    signature = base64.b64encode(hmac.new(API_SECRET.encode(), str_to_sign.encode(), hashlib.sha256).digest())
-    passphrase = base64.b64encode(hmac.new(API_SECRET.encode(), API_PASSPHRASE.encode(), hashlib.sha256).digest())
+# === KUCOIN ===
+def kucoin_headers(method, endpoint):
+    now = int(time.time() * 1000)
+    str_to_sign = f'{now}{method}{endpoint}'
+    signature = base64.b64encode(hmac.new(KUCOIN_API_SECRET.encode(), str_to_sign.encode(), hashlib.sha256).digest()).decode()
+    passphrase = base64.b64encode(hmac.new(KUCOIN_API_SECRET.encode(), KUCOIN_API_PASSPHRASE.encode(), hashlib.sha256).digest()).decode()
     return {
-        "KC-API-KEY": 687a46d91cad950001b63f47,
+        "KC-API-KEY": KUCOIN_API_KEY,
         "KC-API-SIGN": signature,
-        "KC-API-TIMESTAMP": now,
-        "KC-API-PASSPHRASE": 198483,
+        "KC-API-TIMESTAMP": str(now),
+        "KC-API-PASSPHRASE": passphrase,
         "KC-API-KEY-VERSION": "2",
         "Content-Type": "application/json"
     }
 
-def get_price(symbol):
-    url = f"https://api.kucoin.com/api/v1/market/orderbook/level1?symbol={symbol}"
-    response = requests.get(url)
-    return float(response.json()["data"]["price"])
+def kucoin_get_price(symbol):
+    symbol_clean = symbol.replace("/", "-")
+    url = f"https://api.kucoin.com/api/v1/market/orderbook/level1?symbol={symbol_clean}"
+    r = requests.get(url)
+    return float(r.json()["data"]["price"])
 
-def get_ema(symbol, span):
-    url = f"https://api.kucoin.com/api/v1/market/candles?type=1hour&symbol={symbol}"
-    res = requests.get(url).json()
-    closes = [float(c[2]) for c in res["data"]][-span:]
-    return sum(closes) / len(closes)
-
-def place_order(symbol, side, size):
-    endpoint = "/api/v1/orders"
-    url = "https://api.kucoin.com" + endpoint
+def kucoin_buy(symbol, amount_usdt):
+    symbol_clean = symbol.replace("/", "-")
+    url = "https://api.kucoin.com/api/v1/orders"
     data = {
-        "clientOid": str(int(time.time() * 1000)),
-        "side": side,
-        "symbol": symbol,
+        "clientOid": str(time.time()),
+        "side": "buy",
+        "symbol": symbol_clean,
         "type": "market",
-        "funds": str(size)
+        "funds": str(amount_usdt)
     }
-    headers = kucoin_headers(endpoint, "POST", json.dumps(data))
-    res = requests.post(url, headers=headers, json=data)
-    return res.json()
+    r = requests.post(url, headers=kucoin_headers("POST", "/api/v1/orders"), json=data)
+    return r.json()
 
-# === TRADING LOOP ===
+def kucoin_get_address(symbol):
+    coin = symbol.split("/")[0]
+    url = f"https://api.kucoin.com/api/v2/wallet/addresses?currency={coin}&chain=Main"
+    r = requests.get(url, headers=kucoin_headers("GET", f"/api/v2/wallet/addresses?currency={coin}&chain=Main"))
+    addresses = r.json().get("data", [])
+    if not addresses:
+        return None
+    return addresses[0]["address"]
 
-def trade_loop():
+def kucoin_withdraw(symbol, amount):
+    coin = symbol.split("/")[0]
+    address = kucoin_get_address(symbol)
+    if not address:
+        send_telegram(f"❌ Не удалось получить адрес для перевода {coin}")
+        return
+
+    url = "https://api.kucoin.com/api/v1/withdrawals"
+    data = {
+        "currency": coin,
+        "address": address,
+        "amount": str(amount),
+        "chain": "Main",
+        "remark": "Transfer to Bitget",
+        "tradePassword": TRADE_PASSWORD
+    }
+    r = requests.post(url, headers=kucoin_headers("POST", "/api/v1/withdrawals"), json=data)
+    if r.status_code == 200 and r.json()["code"] == "200000":
+        send_telegram(f"🚀 Перевод {amount} {coin} на Bitget отправлен!")
+    else:
+        send_telegram(f"⚠️ Ошибка перевода {coin}: {r.text}")
+
+# === BITGET ===
+def bitget_get_price(symbol):
+    symbol_clean = symbol.replace("/", "")
+    url = f"https://api.bitget.com/api/spot/v1/market/ticker?symbol={symbol_clean}"
+    r = requests.get(url)
+    return float(r.json()["data"]["close"])
+
+# === АРБИТРАЖ ===
+def arbitrage():
     while True:
-        for symbol in TRADE_SYMBOLS:
-            now = time.time()
-            if cooldown.get(symbol, 0) > now:
-                continue
-
+        for symbol in SYMBOLS:
             try:
-                ema9 = get_ema(symbol, 9)
-                ema21 = get_ema(symbol, 21)
-                price = get_price(symbol)
+                now = time.time()
+                if symbol in last_trade_time and now - last_trade_time[symbol] < COOLDOWN:
+                    continue
 
-                if ema9 > ema21:
-                    order = place_order(symbol, "buy", TRADE_AMOUNT)
-                    if order.get("code") == "200000":
-                        send_telegram(f"✅ Куплено {symbol} по {price}\nEMA9={ema9:.2f} > EMA21={ema21:.2f}")
-                        cooldown[symbol] = now + COOLDOWN_SECONDS
-                    else:
-                        send_telegram(f"❌ Ошибка покупки {symbol}: {order}")
+                kucoin_price = kucoin_get_price(symbol)
+                bitget_price = bitget_get_price(symbol)
+
+                diff_percent = ((bitget_price - kucoin_price) / kucoin_price) * 100
+                if diff_percent >= ARBITRAGE_THRESHOLD:
+                    buy_result = kucoin_buy(symbol, TRADE_AMOUNT)
+                    last_trade_time[symbol] = now
+                    send_telegram(f"✅ Куплено {symbol} на KuCoin по {kucoin_price:.4f} | Профит: {diff_percent:.2f}%")
+
+                    # Ждём несколько секунд, чтобы актив упал на баланс
+                    time.sleep(10)
+
+                    # Получаем кол-во купленных монет (упрощённо: делим сумму на цену)
+                    coin = symbol.split("/")[0]
+                    amount_coin = TRADE_AMOUNT / kucoin_price
+                    kucoin_withdraw(symbol, round(amount_coin * 0.98, 6))  # -2% запас на комиссии
+
                 else:
-                    print(f"{symbol}: EMA9={ema9:.2f}, EMA21={ema21:.2f} — сигналов нет")
+                    print(f"{symbol}: разница {diff_percent:.2f}% — недостаточно")
+
             except Exception as e:
-                send_telegram(f"⚠️ Ошибка по {symbol}: {str(e)}")
+                send_telegram(f"⚠️ Ошибка в арбитраже {symbol}: {e}")
+        time.sleep(60)
 
-        time.sleep(300)  # Проверять каждые 5 минут
-
-# === FLASK KEEP-ALIVE ===
-
+# === KEEP-ALIVE ===
 app = Flask(__name__)
 
-@app.route('/')
+@app.route("/")
 def home():
-    return "✅ Бот работает"
+    return "✅ Arbitrage Bot is running!"
 
-# === START ===
-
-if __name__ == '__main__':
-    threading.Thread(target=trade_loop).start()
-    app.run(host='0.0.0.0', port=3000)
-# trigger redeploy
+# === ЗАПУСК ===
+if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO)
+    threading.Thread(target=arbitrage, daemon=True).start()
+    app.run(host="0.0.0.0", port=8080)
