@@ -18,13 +18,12 @@ TRADE_PASSWORD = "198483"
 TELEGRAM_TOKEN = "7630671081:AAG17gVyITruoH_CYreudyTBm5RTpvNgwMA"
 TELEGRAM_CHAT_ID = "5723086631"
 
-TRADE_AMOUNT = 100  # USDT
+TRADE_AMOUNT = 100
 SYMBOLS = ["TRX/USDT", "XRP/USDT", "SOL/USDT", "BTC/USDT"]
-ARBITRAGE_THRESHOLD = 0.8  # %
-COOLDOWN = 60 * 60 * 3  # 3 часа
+ARBITRAGE_THRESHOLD = 0.8
+COOLDOWN = 60 * 60 * 3
 last_trade_time = {}
 
-# === Bitget пары ===
 BITGET_SYMBOLS = {
     "BTC/USDT": "BTCUSDT_SPBL",
     "ETH/USDT": "ETHUSDT_SPBL",
@@ -33,12 +32,10 @@ BITGET_SYMBOLS = {
     "XRP/USDT": "XRPUSDT_SPBL"
 }
 
-# === TELEGRAM ===
 def send_telegram(message):
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
     requests.post(url, data={"chat_id": TELEGRAM_CHAT_ID, "text": message})
 
-# === KUCOIN ===
 def kucoin_headers(method, endpoint):
     now = int(time.time() * 1000)
     str_to_sign = f'{now}{method}{endpoint}'
@@ -58,7 +55,6 @@ def kucoin_get_price(symbol):
     url = f"https://api.kucoin.com/api/v1/market/orderbook/level1?symbol={symbol_clean}"
     r = requests.get(url)
     result = r.json()
-
     if "data" in result and result["data"] and "price" in result["data"]:
         return float(result["data"]["price"])
     else:
@@ -93,7 +89,6 @@ def kucoin_withdraw(symbol, amount):
     if not address:
         send_telegram(f"❌ Не удалось получить адрес для перевода {coin}")
         return
-
     url = "https://api.kucoin.com/api/v1/withdrawals"
     data = {
         "currency": coin,
@@ -109,13 +104,11 @@ def kucoin_withdraw(symbol, amount):
     else:
         send_telegram(f"⚠️ Ошибка перевода {coin}: {r.text}")
 
-# === BITGET ===
 def bitget_get_price(symbol):
     bitget_symbol = BITGET_SYMBOLS.get(symbol)
     if not bitget_symbol:
         send_telegram(f"❌ Неизвестная пара для Bitget: {symbol}")
         return None
-
     url = f"https://api.bitget.com/api/spot/v1/market/ticker?symbol={bitget_symbol}"
     r = requests.get(url)
     result = r.json()
@@ -125,7 +118,6 @@ def bitget_get_price(symbol):
         send_telegram(f"❌ Bitget не вернул цену для {symbol}: {result}")
         return None
 
-# === АРБИТРАЖ ===
 def arbitrage():
     while True:
         for symbol in SYMBOLS:
@@ -141,19 +133,18 @@ def arbitrage():
                     continue
 
                 diff_percent = ((bitget_price - kucoin_price) / kucoin_price) * 100
+                print(f"[{symbol}] KuCoin: {kucoin_price}, Bitget: {bitget_price}, Разница: {diff_percent:.2f}%")
+
                 if diff_percent >= ARBITRAGE_THRESHOLD:
                     buy_result = kucoin_buy(symbol, TRADE_AMOUNT)
                     last_trade_time[symbol] = now
                     send_telegram(f"✅ Куплено {symbol} на KuCoin по {kucoin_price:.4f} | Профит: {diff_percent:.2f}%")
-
                     time.sleep(10)
-
                     coin = symbol.split("/")[0]
                     amount_coin = TRADE_AMOUNT / kucoin_price
                     kucoin_withdraw(symbol, round(amount_coin * 0.98, 6))
-
                 else:
-                    print(f"{symbol}: разница {diff_percent:.2f}% — недостаточно")
+                    pass  # ничего не делаем, просто ждём
 
             except Exception as e:
                 send_telegram(f"⚠️ Ошибка в арбитраже {symbol}: {e}")
