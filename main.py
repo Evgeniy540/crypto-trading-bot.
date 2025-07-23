@@ -103,7 +103,7 @@ def kucoin_withdraw(symbol, amount):
 
 # === BITGET ===
 def bitget_get_price(symbol):
-    symbol_clean = symbol.replace("/", "")
+    symbol_clean = symbol.replace("/", "-")  # Bitget использует дефис, например BTC-USDT
     url = f"https://api.bitget.com/api/spot/v1/market/ticker?symbol={symbol_clean}"
     r = requests.get(url)
     result = r.json()
