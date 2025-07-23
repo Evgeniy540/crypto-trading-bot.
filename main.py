@@ -13,15 +13,16 @@ import logging
 KUCOIN_API_KEY = "687d0016c714e80001eecdbe"
 KUCOIN_API_SECRET = "d954b08b-7fbd-408e-a117-4e358a8a764d"
 KUCOIN_API_PASSPHRASE = "Evgeniy@84"
-TRADE_PASSWORD = "198483"  # Торговый пароль для вывода
+TRADE_PASSWORD = "198483"
 
 TELEGRAM_TOKEN = "7630671081:AAG17gVyITruoH_CYreudyTBm5RTpvNgwMA"
 TELEGRAM_CHAT_ID = "5723086631"
 
 TRADE_AMOUNT = 100  # USDT
 SYMBOLS = ["TRX/USDT", "GALA/USDT", "SOL/USDT", "BTC/USDT"]
-ARBITRAGE_THRESHOLD = 0.8  # % прибыли
+ARBITRAGE_THRESHOLD = 0.8  # %
 COOLDOWN = 60 * 60 * 3  # 3 часа
+
 last_trade_time = {}
 
 # === TELEGRAM ===
@@ -48,7 +49,13 @@ def kucoin_get_price(symbol):
     symbol_clean = symbol.replace("/", "-")
     url = f"https://api.kucoin.com/api/v1/market/orderbook/level1?symbol={symbol_clean}"
     r = requests.get(url)
-    return float(r.json()["data"]["price"])
+    result = r.json()
+
+    if "data" in result and result["data"] and "price" in result["data"]:
+        return float(result["data"]["price"])
+    else:
+        send_telegram(f"❌ KuCoin не вернул цену для {symbol}: {result}")
+        return None
 
 def kucoin_buy(symbol, amount_usdt):
     symbol_clean = symbol.replace("/", "-")
@@ -99,7 +106,12 @@ def bitget_get_price(symbol):
     symbol_clean = symbol.replace("/", "")
     url = f"https://api.bitget.com/api/spot/v1/market/ticker?symbol={symbol_clean}"
     r = requests.get(url)
-    return float(r.json()["data"]["close"])
+    result = r.json()
+    if "data" in result and result["data"] and "close" in result["data"]:
+        return float(result["data"]["close"])
+    else:
+        send_telegram(f"❌ Bitget не вернул цену для {symbol}: {result}")
+        return None
 
 # === АРБИТРАЖ ===
 def arbitrage():
@@ -113,19 +125,20 @@ def arbitrage():
                 kucoin_price = kucoin_get_price(symbol)
                 bitget_price = bitget_get_price(symbol)
 
+                if kucoin_price is None or bitget_price is None:
+                    continue
+
                 diff_percent = ((bitget_price - kucoin_price) / kucoin_price) * 100
                 if diff_percent >= ARBITRAGE_THRESHOLD:
                     buy_result = kucoin_buy(symbol, TRADE_AMOUNT)
                     last_trade_time[symbol] = now
                     send_telegram(f"✅ Куплено {symbol} на KuCoin по {kucoin_price:.4f} | Профит: {diff_percent:.2f}%")
 
-                    # Ждём несколько секунд, чтобы актив упал на баланс
                     time.sleep(10)
 
-                    # Получаем кол-во купленных монет (упрощённо: делим сумму на цену)
                     coin = symbol.split("/")[0]
                     amount_coin = TRADE_AMOUNT / kucoin_price
-                    kucoin_withdraw(symbol, round(amount_coin * 0.98, 6))  # -2% запас на комиссии
+                    kucoin_withdraw(symbol, round(amount_coin * 0.98, 6))
 
                 else:
                     print(f"{symbol}: разница {diff_percent:.2f}% — недостаточно")
