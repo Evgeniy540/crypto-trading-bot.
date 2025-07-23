@@ -10,7 +10,7 @@ from flask import Flask
 # === CONFIG ===
 API_KEY = "687a46d91cad950001b63f47"
 API_SECRET = "3c7fad47-f000-4336-8162-3e2132b6372a"
-API_PASSPHRASE = "Evgeniy@84"
+API_PASSPHRASE = "198483"
 TELEGRAM_TOKEN = "7630671081:AAG17gVyITruoH_CYreudyTBm5RTpvNgwMA"
 TELEGRAM_CHAT_ID = "5723086631"
 TRADE_SYMBOLS = ["BTC-USDT", "ETH-USDT", "SOL-USDT", "GALA-USDT"]
@@ -38,7 +38,7 @@ def kucoin_headers(endpoint, method="GET", body=""):
         "KC-API-KEY": 687a46d91cad950001b63f47,
         "KC-API-SIGN": signature,
         "KC-API-TIMESTAMP": now,
-        "KC-API-PASSPHRASE": Evgeniy@84,
+        "KC-API-PASSPHRASE": 198483,
         "KC-API-KEY-VERSION": "2",
         "Content-Type": "application/json"
     }
