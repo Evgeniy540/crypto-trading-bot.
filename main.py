@@ -22,8 +22,16 @@ TRADE_AMOUNT = 100  # USDT
 SYMBOLS = ["TRX/USDT", "GALA/USDT", "SOL/USDT", "BTC/USDT"]
 ARBITRAGE_THRESHOLD = 0.8  # %
 COOLDOWN = 60 * 60 * 3  # 3 часа
-
 last_trade_time = {}
+
+# === Bitget пары ===
+BITGET_SYMBOLS = {
+    "BTC/USDT": "BTCUSDT_SPBL",
+    "ETH/USDT": "ETHUSDT_SPBL",
+    "SOL/USDT": "SOLUSDT_SPBL",
+    "TRX/USDT": "TRXUSDT_SPBL",
+    "GALA/USDT": "GALAUSDT_SPBL"
+}
 
 # === TELEGRAM ===
 def send_telegram(message):
@@ -103,8 +111,12 @@ def kucoin_withdraw(symbol, amount):
 
 # === BITGET ===
 def bitget_get_price(symbol):
-    symbol_clean = symbol.replace("/", "-")  # Bitget использует дефис, например BTC-USDT
-    url = f"https://api.bitget.com/api/spot/v1/market/ticker?symbol={symbol_clean}"
+    bitget_symbol = BITGET_SYMBOLS.get(symbol)
+    if not bitget_symbol:
+        send_telegram(f"❌ Неизвестная пара для Bitget: {symbol}")
+        return None
+
+    url = f"https://api.bitget.com/api/spot/v1/market/ticker?symbol={bitget_symbol}"
     r = requests.get(url)
     result = r.json()
     if "data" in result and result["data"] and "close" in result["data"]:
