@@ -13,15 +13,15 @@ KUCOIN_API_KEY = "687d0016c714e80001eecdbe"
 KUCOIN_API_SECRET = "d954b08b-7fbd-408e-a117-4e358a8a764d"
 KUCOIN_API_PASSPHRASE = "Evgeniy@84"
 
-BITGET_API_KEY = "b8c00194-cd2e-4196-9442-538774c5d228"
-BITGET_API_SECRET = "0b2aa92e-8e69-4f87-b25e-e21a8d738f9c"
+BITGET_API_KEY = "bg_ec8a64de58248985f9817cbd3db16977"
+BITGET_API_SECRET = "b56b8e53af502bee4ba48c7e5eedcf67784526c53075bd1734b7f8ef3381c018"
 BITGET_API_PASSPHRASE = "Evgeniy@84"
 
 TELEGRAM_TOKEN = "7630671081:AAG17gVyITruoH_CYreudyTBm5RTpvNgwMA"
 TELEGRAM_CHAT_ID = "5723086631"
 TRADE_AMOUNT = 100
-ARBITRAGE_THRESHOLD = 0.35  # минимальная разница в % для сделки
-COOLDOWN = 60 * 60 * 3  # 3 часа между сделками
+ARBITRAGE_THRESHOLD = 0.35
+COOLDOWN = 60 * 60 * 3
 
 last_trade_time = {}
 SYMBOLS = ["TRX/USDT", "XRP/USDT", "SOL/USDT", "BTC/USDT", "GALA/USDT"]
@@ -54,7 +54,6 @@ def send_telegram(msg):
     except Exception as e:
         logging.error(f"Telegram Error: {e}")
 
-# KuCoin ============================
 def kucoin_headers(method, endpoint):
     now = int(time.time() * 1000)
     str_to_sign = f'{now}{method}{endpoint}'
@@ -115,7 +114,6 @@ def kucoin_withdraw(symbol, amount_coin):
     except Exception as e:
         logging.error(f"KuCoin Withdraw Error ({coin}): {e}")
 
-# Bitget ============================
 def bitget_headers(method, request_path, body=''):
     timestamp = str(int(time.time() * 1000))
     message = timestamp + method + request_path + body
@@ -168,7 +166,6 @@ def bitget_sell(symbol, amount_coin):
         send_telegram("❌ Ошибка продажи на Bitget")
         return 0
 
-# Главный цикл =====================
 def arbitrage_loop():
     global TRADE_AMOUNT
     logging.info("🔁 arbitrage_loop запущен")
@@ -188,7 +185,7 @@ def arbitrage_loop():
                     send_telegram(f"✅ Куплено {symbol} на KuCoin за {TRADE_AMOUNT} USDT")
                     amount_coin = round(TRADE_AMOUNT / kucoin_price * 0.98, 6)
                     kucoin_withdraw(symbol, amount_coin)
-                    time.sleep(30)  # Подождать, пока монета поступит на Bitget
+                    time.sleep(30)
                     earned = bitget_sell(symbol, amount_coin)
                     profit = earned - TRADE_AMOUNT
                     send_telegram(f"📈 Прибыль: {profit:.2f} USDT")
@@ -196,7 +193,6 @@ def arbitrage_loop():
                     last_trade_time[symbol] = now
         time.sleep(60)
 
-# Web ==============================
 @app.route("/")
 def home():
     return "✅ Arbitrage bot is running"
