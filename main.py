@@ -1,4 +1,3 @@
-
 import time
 import hmac
 import hashlib
@@ -9,7 +8,6 @@ import threading
 import logging
 from flask import Flask
 
-# === НАСТРОЙКИ ===
 KUCOIN_API_KEY = "687d0016c714e80001eecdbe"
 KUCOIN_API_SECRET = "d954b08b-7fbd-408e-a117-4e358a8a764d"
 KUCOIN_API_PASSPHRASE = "Evgeniy@84"
@@ -53,7 +51,7 @@ def send_telegram(msg):
         requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage",
                       data={"chat_id": TELEGRAM_CHAT_ID, "text": msg})
     except Exception as e:
-        logging.error(f"Telegram Error: {e}")
+        logging.warning(f"Telegram Error: {e}")
 
 def kucoin_headers(method, endpoint):
     now = int(time.time() * 1000)
@@ -78,7 +76,7 @@ def kucoin_get_price(symbol):
             raise ValueError("Цена KuCoin не получена")
         return float(data["price"])
     except Exception as e:
-        logging.error(f"KuCoin Price Error ({symbol}): {e}")
+        logging.warning(f"KuCoin Price Warning ({symbol}): {e}")
         return None
 
 def kucoin_buy(symbol, amount):
@@ -95,7 +93,7 @@ def kucoin_buy(symbol, amount):
         r = requests.post(url, headers=kucoin_headers("POST", "/api/v1/orders"), json=body)
         return r.json()
     except Exception as e:
-        logging.error(f"KuCoin Buy Error ({symbol}): {e}")
+        logging.warning(f"KuCoin Buy Warning ({symbol}): {e}")
         return {}
 
 def kucoin_withdraw(symbol, amount_coin):
@@ -116,7 +114,7 @@ def kucoin_withdraw(symbol, amount_coin):
         r = requests.post(url, headers=kucoin_headers("POST", "/api/v1/withdrawals"), json=body)
         send_telegram(f"📤 Перевод {amount_coin} {coin} на Bitget: {r.text}")
     except Exception as e:
-        logging.error(f"KuCoin Withdraw Error ({coin}): {e}")
+        logging.warning(f"KuCoin Withdraw Warning ({coin}): {e}")
 
 def bitget_headers(method, request_path, body=''):
     timestamp = str(int(time.time() * 1000))
@@ -138,7 +136,7 @@ def bitget_get_price(symbol):
         r = requests.get(f"https://api.bitget.com/api/spot/v1/market/ticker?symbol={s}")
         return float(r.json()["data"]["close"])
     except Exception as e:
-        logging.error(f"Bitget Price Error ({symbol}): {e}")
+        logging.warning(f"Bitget Price Warning ({symbol}): {e}")
         return None
 
 def bitget_sell(symbol, amount_coin):
