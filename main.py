@@ -7,7 +7,6 @@ import hashlib
 from datetime import datetime
 import threading
 from flask import Flask
-import logging
 
 # === КЛЮЧИ KuCoin ===
 API_KEY = "687d0016c714e80001eecdbe"
@@ -19,7 +18,7 @@ TELEGRAM_TOKEN = "7630671081:AAG17gVyITruoH_CYreudyTBm5RTpvNgwMA"
 TELEGRAM_CHAT_ID = "5723086631"
 
 # === Настройки ===
-TRADE_SYMBOLS = ["BTC-USDT", "ETH-USDT", "TRX-USDT", "XRP-USDT", "SOL-USDT"]
+TRADE_SYMBOLS = ["BTC-USDT", "ETH-USDT", "SOL-USDT", "XRP-USDT"]
 TRADE_AMOUNT = 50
 PRICE_DROP_THRESHOLD = 0.01  # 1%
 TAKE_PROFIT = 0.015          # 1.5%
@@ -30,7 +29,10 @@ active_trades = {}
 
 def send_telegram(text):
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-    requests.post(url, data={"chat_id": TELEGRAM_CHAT_ID, "text": text})
+    try:
+        requests.post(url, data={"chat_id": TELEGRAM_CHAT_ID, "text": text})
+    except Exception as e:
+        print(f"❌ Ошибка Telegram: {e}")
 
 def kucoin_headers(method, endpoint, body=""):
     now = int(time.time() * 1000)
@@ -81,7 +83,6 @@ def trading_loop():
                 print(f"[{symbol}] ❌ Цена не получена")
                 continue
 
-            # Сохраняем историю
             history = price_history.setdefault(symbol, [])
             history.append((time.time(), price))
             history = [p for p in history if time.time() - p[0] <= 600]
@@ -90,7 +91,6 @@ def trading_loop():
             min_price = min([p[1] for p in history])
             price_drop = (min_price - price) / min_price if min_price else 0
 
-            # Если уже купили — проверка TP/SL
             if symbol in active_trades:
                 entry_price = active_trades[symbol]
                 change = (price - entry_price) / entry_price
@@ -106,7 +106,6 @@ def trading_loop():
                     del active_trades[symbol]
                 continue
 
-            # Условие покупки
             if price_drop >= PRICE_DROP_THRESHOLD:
                 print(f"[{symbol}] 🔽 Цена упала на {price_drop*100:.2f}%. Покупаем...")
                 usdt_price = price
@@ -118,7 +117,7 @@ def trading_loop():
 
         time.sleep(30)
 
-# === Flask keep-alive ===
+# Flask keep-alive
 app = Flask(__name__)
 @app.route("/")
 def home():
