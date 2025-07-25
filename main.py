@@ -1,3 +1,4 @@
+
 import time
 import hmac
 import hashlib
@@ -72,7 +73,10 @@ def kucoin_get_price(symbol):
     try:
         s = symbol.replace("/", "-")
         r = requests.get(f"https://api.kucoin.com/api/v1/market/orderbook/level1?symbol={s}")
-        return float(r.json()["data"]["price"])
+        data = r.json().get("data")
+        if not data or "price" not in data:
+            raise ValueError("Цена KuCoin не получена")
+        return float(data["price"])
     except Exception as e:
         logging.error(f"KuCoin Price Error ({symbol}): {e}")
         return None
