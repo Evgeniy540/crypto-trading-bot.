@@ -1,2 +1,4 @@
-requests
 flask
+requests
+python-dotenv
+python-telegram-bot==13.15
