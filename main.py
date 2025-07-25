@@ -7,14 +7,19 @@ import hashlib
 from datetime import datetime
 import threading
 from flask import Flask
+import logging
 
 # === КЛЮЧИ KuCoin ===
 API_KEY = "687d0016c714e80001eecdbe"
 API_SECRET = "d954b08b-7fbd-408e-a117-4e358a8a764d"
 API_PASSPHRASE = "Evgeniy@84"
 
+# === Telegram ===
+TELEGRAM_TOKEN = "7630671081:AAG17gVyITruoH_CYreudyTBm5RTpvNgwMA"
+TELEGRAM_CHAT_ID = "5723086631"
+
 # === Настройки ===
-TRADE_SYMBOLS = ["BTC-USDT", "ETH-USDT", "TRX-USDT", "SOL-USDT"]
+TRADE_SYMBOLS = ["BTC-USDT", "ETH-USDT", "TRX-USDT", "XRP-USDT", "SOL-USDT"]
 TRADE_AMOUNT = 50
 PRICE_DROP_THRESHOLD = 0.01  # 1%
 TAKE_PROFIT = 0.015          # 1.5%
@@ -22,6 +27,13 @@ STOP_LOSS = 0.01             # 1%
 
 price_history = {}
 active_trades = {}
+
+def send_telegram(text):
+    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+    try:
+        requests.post(url, data={"chat_id": TELEGRAM_CHAT_ID, "text": text})
+    except:
+        print("❌ Ошибка при отправке Telegram-сообщения")
 
 def kucoin_headers(method, endpoint, body=""):
     now = int(time.time() * 1000)
@@ -85,30 +97,33 @@ def trading_loop():
                 change = (price - entry_price) / entry_price
 
                 if change >= TAKE_PROFIT:
-                    print(f"[{symbol}] 📈 TP достигнут: +{change*100:.2f}%")
+                    print(f"[{symbol}] 📈 TP: {change*100:.2f}%")
+                    send_telegram(f"✅ Продажа {symbol} по TP: прибыль {change*100:.2f}%")
                     del active_trades[symbol]
 
                 elif change <= -STOP_LOSS:
-                    print(f"[{symbol}] 📉 SL сработал: {change*100:.2f}%")
+                    print(f"[{symbol}] 📉 SL: {change*100:.2f}%")
+                    send_telegram(f"⚠️ Продажа {symbol} по SL: убыток {change*100:.2f}%")
                     del active_trades[symbol]
                 continue
 
             if price_drop >= PRICE_DROP_THRESHOLD:
                 print(f"[{symbol}] 🔽 Цена упала на {price_drop*100:.2f}%. Покупаем...")
-                usdt_price = price
-                size = round(TRADE_AMOUNT / usdt_price, 6)
+                size = round(TRADE_AMOUNT / price, 6)
                 order = place_order(symbol, "buy", str(size))
-                print(f"[{symbol}] Ордер: {order}")
+                print(f"[{symbol}] Ордер отправлен: {order}")
+                send_telegram(f"🟢 Куплен {symbol} на {TRADE_AMOUNT} USDT по {price}")
                 active_trades[symbol] = price
 
         time.sleep(30)
 
+# === Flask сервер для Railway ===
 app = Flask(__name__)
 @app.route("/")
 def home():
-    return "✅ KuCoin Trader работает!"
-
-threading.Thread(target=trading_loop, daemon=True).start()
+    return "✅ KuCoin Trader Bot запущен!"
 
 if __name__ == "__main__":
+    threading.Thread(target=trading_loop, daemon=True).start()
+    send_telegram("🚀 Бот запущен на Railway и готов к торговле")
     app.run(host="0.0.0.0", port=8080)
