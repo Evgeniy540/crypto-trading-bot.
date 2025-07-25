@@ -46,8 +46,7 @@ def get_price(symbol):
         url = f"https://api.kucoin.com/api/v1/market/orderbook/level1?symbol={symbol}"
         r = requests.get(url).json()
         return float(r["data"]["price"])
-    except Exception as e:
-        print(f"[{symbol}] ❌ Ошибка получения цены: {e}")
+    except:
         return None
 
 def place_order(symbol, side, size):
@@ -61,21 +60,16 @@ def place_order(symbol, side, size):
     }
     body_json = json.dumps(body)
     headers = kucoin_headers("POST", "/api/v1/orders", body_json)
-    try:
-        r = requests.post(url, headers=headers, data=body_json)
-        return r.json()
-    except Exception as e:
-        print(f"[{symbol}] ❌ Ошибка размещения ордера: {e}")
-        return None
+    r = requests.post(url, headers=headers, data=body_json)
+    return r.json()
 
 def trading_loop():
-    print("🟢 Бот запущен и работает!")
     while True:
         for symbol in TRADE_SYMBOLS:
             base = symbol.split("-")[0]
             price = get_price(symbol)
             if not price:
-                print(f"[{symbol}] ⚠️ Цена не получена")
+                print(f"[{symbol}] ❌ Цена не получена")
                 continue
 
             history = price_history.setdefault(symbol, [])
@@ -91,28 +85,28 @@ def trading_loop():
                 change = (price - entry_price) / entry_price
 
                 if change >= TAKE_PROFIT:
-                    print(f"[{symbol}] ✅ Продажа по TP: +{change*100:.2f}%")
+                    print(f"[{symbol}] 📈 TP достигнут: +{change*100:.2f}%")
                     del active_trades[symbol]
+
                 elif change <= -STOP_LOSS:
-                    print(f"[{symbol}] ⚠️ Продажа по SL: {change*100:.2f}%")
+                    print(f"[{symbol}] 📉 SL сработал: {change*100:.2f}%")
                     del active_trades[symbol]
                 continue
 
             if price_drop >= PRICE_DROP_THRESHOLD:
-                print(f"[{symbol}] 📉 Цена упала на {price_drop*100:.2f}% — покупаем...")
+                print(f"[{symbol}] 🔽 Цена упала на {price_drop*100:.2f}%. Покупаем...")
                 usdt_price = price
                 size = round(TRADE_AMOUNT / usdt_price, 6)
                 order = place_order(symbol, "buy", str(size))
-                print(f"[{symbol}] 🛒 Ордер: {order}")
+                print(f"[{symbol}] Ордер: {order}")
                 active_trades[symbol] = price
 
         time.sleep(30)
 
-# === Flask keep-alive ===
 app = Flask(__name__)
 @app.route("/")
 def home():
-    return "✅ KuCoin Bot работает!"
+    return "✅ KuCoin Trader работает!"
 
 threading.Thread(target=trading_loop, daemon=True).start()
 
