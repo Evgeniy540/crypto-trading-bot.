@@ -13,12 +13,8 @@ API_KEY = "687d0016c714e80001eecdbe"
 API_SECRET = "d954b08b-7fbd-408e-a117-4e358a8a764d"
 API_PASSPHRASE = "Evgeniy@84"
 
-# === Telegram ===
-TELEGRAM_TOKEN = "7630671081:AAG17gVyITruoH_CYreudyTBm5RTpvNgwMA"
-TELEGRAM_CHAT_ID = "5723086631"
-
 # === Настройки ===
-TRADE_SYMBOLS = ["BTC-USDT", "ETH-USDT", "SOL-USDT", "XRP-USDT"]
+TRADE_SYMBOLS = ["BTC-USDT", "ETH-USDT", "TRX-USDT", "SOL-USDT"]
 TRADE_AMOUNT = 50
 PRICE_DROP_THRESHOLD = 0.01  # 1%
 TAKE_PROFIT = 0.015          # 1.5%
@@ -26,13 +22,6 @@ STOP_LOSS = 0.01             # 1%
 
 price_history = {}
 active_trades = {}
-
-def send_telegram(text):
-    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-    try:
-        requests.post(url, data={"chat_id": TELEGRAM_CHAT_ID, "text": text})
-    except Exception as e:
-        print(f"❌ Ошибка Telegram: {e}")
 
 def kucoin_headers(method, endpoint, body=""):
     now = int(time.time() * 1000)
@@ -57,7 +46,8 @@ def get_price(symbol):
         url = f"https://api.kucoin.com/api/v1/market/orderbook/level1?symbol={symbol}"
         r = requests.get(url).json()
         return float(r["data"]["price"])
-    except:
+    except Exception as e:
+        print(f"[{symbol}] ❌ Ошибка получения цены: {e}")
         return None
 
 def place_order(symbol, side, size):
@@ -71,16 +61,21 @@ def place_order(symbol, side, size):
     }
     body_json = json.dumps(body)
     headers = kucoin_headers("POST", "/api/v1/orders", body_json)
-    r = requests.post(url, headers=headers, data=body_json)
-    return r.json()
+    try:
+        r = requests.post(url, headers=headers, data=body_json)
+        return r.json()
+    except Exception as e:
+        print(f"[{symbol}] ❌ Ошибка размещения ордера: {e}")
+        return None
 
 def trading_loop():
+    print("🟢 Бот запущен и работает!")
     while True:
         for symbol in TRADE_SYMBOLS:
             base = symbol.split("-")[0]
             price = get_price(symbol)
             if not price:
-                print(f"[{symbol}] ❌ Цена не получена")
+                print(f"[{symbol}] ⚠️ Цена не получена")
                 continue
 
             history = price_history.setdefault(symbol, [])
@@ -96,32 +91,28 @@ def trading_loop():
                 change = (price - entry_price) / entry_price
 
                 if change >= TAKE_PROFIT:
-                    print(f"[{symbol}] 📈 TakeProfit достигнут: {change*100:.2f}%")
-                    send_telegram(f"✅ Продажа {symbol} по TP: прибыль {change*100:.2f}%")
+                    print(f"[{symbol}] ✅ Продажа по TP: +{change*100:.2f}%")
                     del active_trades[symbol]
-
                 elif change <= -STOP_LOSS:
-                    print(f"[{symbol}] 📉 StopLoss сработал: {change*100:.2f}%")
-                    send_telegram(f"⚠️ Продажа {symbol} по SL: убыток {change*100:.2f}%")
+                    print(f"[{symbol}] ⚠️ Продажа по SL: {change*100:.2f}%")
                     del active_trades[symbol]
                 continue
 
             if price_drop >= PRICE_DROP_THRESHOLD:
-                print(f"[{symbol}] 🔽 Цена упала на {price_drop*100:.2f}%. Покупаем...")
+                print(f"[{symbol}] 📉 Цена упала на {price_drop*100:.2f}% — покупаем...")
                 usdt_price = price
                 size = round(TRADE_AMOUNT / usdt_price, 6)
                 order = place_order(symbol, "buy", str(size))
-                print(f"[{symbol}] Ордер отправлен: {order}")
-                send_telegram(f"🟢 Куплен {symbol} на {TRADE_AMOUNT} USDT по цене {usdt_price}")
+                print(f"[{symbol}] 🛒 Ордер: {order}")
                 active_trades[symbol] = price
 
         time.sleep(30)
 
-# Flask keep-alive
+# === Flask keep-alive ===
 app = Flask(__name__)
 @app.route("/")
 def home():
-    return "✅ KuCoin Trader Bot запущен!"
+    return "✅ KuCoin Bot работает!"
 
 threading.Thread(target=trading_loop, daemon=True).start()
 
