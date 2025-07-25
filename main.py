@@ -1,112 +1,136 @@
 import time
+import requests
 import hmac
 import base64
-import hashlib
-import requests
 import json
+import hashlib
+from datetime import datetime
 import threading
 from flask import Flask
 
-# === CONFIG ===
-API_KEY = "687a46d91cad950001b63f47"
-API_SECRET = "3c7fad47-f000-4336-8162-3e2132b6372a"
+# === KuCoin API Keys ===
+API_KEY = "687d0016c714e80001eecdbe"
+API_SECRET = "d954b08b-7fbd-408e-a117-4e358a8a764d"
 API_PASSPHRASE = "Evgeniy@84"
+
+# === Telegram ===
 TELEGRAM_TOKEN = "7630671081:AAG17gVyITruoH_CYreudyTBm5RTpvNgwMA"
 TELEGRAM_CHAT_ID = "5723086631"
-TRADE_SYMBOLS = ["BTC-USDT", "ETH-USDT", "SOL-USDT", "GALA-USDT"]
-TRADE_AMOUNT = 28
-COOLDOWN_SECONDS = 6 * 60 * 60
 
-cooldown = {}
+# === Настройки ===
+TRADE_SYMBOLS = ["BTC-USDT", "ETH-USDT", "TRX-USDT", "XRP-USDT", "SOL-USDT"]
+TRADE_AMOUNT = 50
+PRICE_DROP_THRESHOLD = 0.01  # 1%
+TAKE_PROFIT = 0.015          # 1.5%
+STOP_LOSS = 0.01             # 1%
+CHECK_INTERVAL = 30          # секунд между проверками
 
-# === UTILS ===
+price_history = {}
+active_trades = {}
 
-def send_telegram(message):
+def send_telegram(text):
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-    payload = {"chat_id": TELEGRAM_CHAT_ID, "text": message}
     try:
-        requests.post(url, data=payload)
-    except:
-        pass
+        requests.post(url, data={"chat_id": TELEGRAM_CHAT_ID, "text": text})
+    except Exception as e:
+        print("❌ Ошибка Telegram:", e)
 
-def kucoin_headers(endpoint, method="GET", body=""):
-    now = str(int(time.time() * 1000))
-    str_to_sign = now + method + endpoint + body
-    signature = base64.b64encode(hmac.new(API_SECRET.encode(), str_to_sign.encode(), hashlib.sha256).digest())
-    passphrase = base64.b64encode(hmac.new(API_SECRET.encode(), API_PASSPHRASE.encode(), hashlib.sha256).digest())
+def kucoin_headers(method, endpoint, body=""):
+    now = int(time.time() * 1000)
+    str_to_sign = str(now) + method + endpoint + body
+    signature = base64.b64encode(
+        hmac.new(API_SECRET.encode('utf-8'), str_to_sign.encode('utf-8'), hashlib.sha256).digest()
+    )
+    passphrase = base64.b64encode(
+        hmac.new(API_SECRET.encode('utf-8'), API_PASSPHRASE.encode('utf-8'), hashlib.sha256).digest()
+    )
     return {
-        "KC-API-KEY": 687a46d91cad950001b63f47,
-        "KC-API-SIGN": signature,
-        "KC-API-TIMESTAMP": now,
-        "KC-API-PASSPHRASE": Evgeniy@84,
+        "KC-API-KEY": API_KEY,
+        "KC-API-SIGN": signature.decode(),
+        "KC-API-TIMESTAMP": str(now),
+        "KC-API-PASSPHRASE": passphrase.decode(),
         "KC-API-KEY-VERSION": "2",
         "Content-Type": "application/json"
     }
 
 def get_price(symbol):
-    url = f"https://api.kucoin.com/api/v1/market/orderbook/level1?symbol={symbol}"
-    response = requests.get(url)
-    return float(response.json()["data"]["price"])
-
-def get_ema(symbol, span):
-    url = f"https://api.kucoin.com/api/v1/market/candles?type=1hour&symbol={symbol}"
-    res = requests.get(url).json()
-    closes = [float(c[2]) for c in res["data"]][-span:]
-    return sum(closes) / len(closes)
+    try:
+        url = f"https://api.kucoin.com/api/v1/market/orderbook/level1?symbol={symbol}"
+        r = requests.get(url, timeout=10).json()
+        return float(r["data"]["price"])
+    except Exception as e:
+        print(f"Ошибка получения цены {symbol}:", e)
+        return None
 
 def place_order(symbol, side, size):
-    endpoint = "/api/v1/orders"
-    url = "https://api.kucoin.com" + endpoint
-    data = {
-        "clientOid": str(int(time.time() * 1000)),
+    url = "https://api.kucoin.com/api/v1/orders"
+    body = {
+        "clientOid": str(int(time.time()*1000)),
         "side": side,
         "symbol": symbol,
         "type": "market",
-        "funds": str(size)
+        "size": size
     }
-    headers = kucoin_headers(endpoint, "POST", json.dumps(data))
-    res = requests.post(url, headers=headers, json=data)
-    return res.json()
+    body_json = json.dumps(body)
+    headers = kucoin_headers("POST", "/api/v1/orders", body_json)
+    try:
+        r = requests.post(url, headers=headers, data=body_json, timeout=10)
+        return r.json()
+    except Exception as e:
+        print(f"Ошибка отправки ордера {symbol}:", e)
+        return None
 
-# === TRADING LOOP ===
-
-def trade_loop():
+def trading_loop():
     while True:
         for symbol in TRADE_SYMBOLS:
-            now = time.time()
-            if cooldown.get(symbol, 0) > now:
+            base = symbol.split("-")[0]
+            price = get_price(symbol)
+            if not price:
+                print(f"[{symbol}] ❌ Цена не получена")
                 continue
 
-            try:
-                ema9 = get_ema(symbol, 9)
-                ema21 = get_ema(symbol, 21)
-                price = get_price(symbol)
+            history = price_history.setdefault(symbol, [])
+            history.append((time.time(), price))
+            history = [p for p in history if time.time() - p[0] <= 600]
+            price_history[symbol] = history
 
-                if ema9 > ema21:
-                    order = place_order(symbol, "buy", TRADE_AMOUNT)
-                    if order.get("code") == "200000":
-                        send_telegram(f"✅ Куплено {symbol} по {price}\nEMA9={ema9:.2f} > EMA21={ema21:.2f}")
-                        cooldown[symbol] = now + COOLDOWN_SECONDS
-                    else:
-                        send_telegram(f"❌ Ошибка покупки {symbol}: {order}")
-                else:
-                    print(f"{symbol}: EMA9={ema9:.2f}, EMA21={ema21:.2f} — сигналов нет")
-            except Exception as e:
-                send_telegram(f"⚠️ Ошибка по {symbol}: {str(e)}")
+            min_price = min([p[1] for p in history])
+            price_drop = (min_price - price) / min_price if min_price else 0
 
-        time.sleep(300)  # Проверять каждые 5 минут
+            if symbol in active_trades:
+                entry_price = active_trades[symbol]
+                change = (price - entry_price) / entry_price
 
-# === FLASK KEEP-ALIVE ===
+                if change >= TAKE_PROFIT:
+                    print(f"[{symbol}] 📈 TP достигнут: +{change*100:.2f}%")
+                    send_telegram(f"✅ Продажа {symbol} по TP: прибыль {change*100:.2f}%")
+                    del active_trades[symbol]
 
+                elif change <= -STOP_LOSS:
+                    print(f"[{symbol}] 📉 SL сработал: {change*100:.2f}%")
+                    send_telegram(f"⚠️ Продажа {symbol} по SL: убыток {change*100:.2f}%")
+                    del active_trades[symbol]
+                continue
+
+            if price_drop >= PRICE_DROP_THRESHOLD:
+                print(f"[{symbol}] 🔽 Цена упала на {price_drop*100:.2f}%. Покупаем...")
+                usdt_price = price
+                size = round(TRADE_AMOUNT / usdt_price, 6)
+                order = place_order(symbol, "buy", str(size))
+                print(f"[{symbol}] Ордер отправлен: {order}")
+                send_telegram(f"🟢 Куплен {symbol} на {TRADE_AMOUNT} USDT по {usdt_price}")
+                active_trades[symbol] = price
+
+        time.sleep(CHECK_INTERVAL)
+
+# Flask сервер
 app = Flask(__name__)
-
-@app.route('/')
+@app.route("/")
 def home():
-    return "✅ Бот работает"
+    return "✅ KuCoin Auto-Trader is running!"
 
-# === START ===
+# Запуск трейдера
+threading.Thread(target=trading_loop, daemon=True).start()
 
-if __name__ == '__main__':
-    threading.Thread(target=trade_loop).start()
-    app.run(host='0.0.0.0', port=3000)
-# trigger redeploy
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=8080)
