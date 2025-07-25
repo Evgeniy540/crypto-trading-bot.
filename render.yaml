@@ -1,0 +1,7 @@
+services:
+  - type: web
+    name: crypto-trading-bot
+    env: python
+    buildCommand: ""
+    startCommand: "gunicorn main:app"
+    plan: free
