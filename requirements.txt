@@ -1,5 +1,5 @@
-flask
 requests
-python-dotenv
-python-telegram-bot==13.15
-gunicorn
+flask
+numpy
+pandas
+schedule
