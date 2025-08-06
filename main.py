@@ -2,7 +2,6 @@ import time, hmac, hashlib, json, requests, threading, os
 import numpy as np
 import pandas as pd
 from flask import Flask
-from datetime import datetime
 
 # === НАСТРОЙКИ ===
 TELEGRAM_TOKEN = "7630671081:AAG17gVyITruoH_CYreudyTBm5RTpvNgwMA"
@@ -71,8 +70,6 @@ def signal_monitor():
                 elif ema9 < ema21 and previous != "short":
                     send_telegram(f"🔴 [SIGNAL] SHORT по {symbol}\nEMA9: {ema9:.2f} < EMA21: {ema21:.2f}")
                     last_signals[symbol] = "short"
-                else:
-                    pass  # нет нового сигнала
             except Exception as e:
                 send_telegram(f"⚠️ Ошибка {symbol}: {e}")
         time.sleep(CHECK_INTERVAL)
@@ -82,9 +79,9 @@ def home():
     return "Signal bot is running!"
 
 def start():
-    send_telegram("📡 Сигнальный бот запущен и отслеживает сигналы по EMA (9/21)")
     threading.Thread(target=signal_monitor).start()
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
 
 if __name__ == "__main__":
+    send_telegram("🛰 Сигнальный бот запущен и отслеживает сигналы по EMA (9/21)")
     start()
