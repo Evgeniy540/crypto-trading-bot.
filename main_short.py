@@ -2,6 +2,7 @@ import time, hmac, hashlib, json, requests, threading, os, schedule
 from flask import Flask, request
 from datetime import datetime
 import numpy as np
+import pandas as pd
 
 # === КЛЮЧИ ===
 API_KEY = "bg_7bd202760f36727cedf11a481dbca611"
@@ -11,17 +12,15 @@ TELEGRAM_TOKEN = "7630671081:AAG17gVyITruoH_CYreudyTBm5RTpvNgwMA"
 TELEGRAM_CHAT_ID = "5723086631"
 
 # === НАСТРОЙКИ ===
-TRADE_AMOUNT = 10.0  # начальная сумма сделки в USDT
+TRADE_AMOUNT = 10.0
 SYMBOLS = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "XRPUSDT", "TRXUSDT", "PEPEUSDT", "BGBUSDT"]
 INTERVAL = "1m"
 TP_PERCENT = 1.5
 SL_PERCENT = 1.0
 
 app = Flask(__name__)
-
 positions_file = "short_positions.json"
 profit_file = "short_profit.json"
-last_signal_time = {}
 
 # === Bitget API ===
 def bitget_request(method, path, params=None, body=""):
@@ -164,8 +163,8 @@ def start():
     threading.Thread(target=monitor).start()
     schedule.every().day.at("20:47").do(lambda: send_telegram(f"📊 Ежедневная прибыль: {load_profit()['total_profit']:.4f} USDT"))
     threading.Thread(target=lambda: schedule.run_pending()).start()
+    send_telegram("🤖 Short бот успешно запущен на Render!")
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
 
 if __name__ == "__main__":
-    import pandas as pd
     start()
