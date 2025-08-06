@@ -1,131 +1,170 @@
-import time
-import requests
-import hmac
-import base64
-import hashlib
-import json
-import threading
+import time, hmac, hashlib, json, requests, threading, os, schedule
+from flask import Flask, request
 from datetime import datetime
-from flask import Flask
+import numpy as np
+import pandas as pd
 
-# === КЛЮЧИ KuCoin ===
-API_KEY = "687d0016c714e80001eecdbe"
-API_SECRET = "d954b08b-7fbd-408e-a117-4e358a8a764d"
-API_PASSPHRASE = "Evgeniy@84"
-
-# === TELEGRAM ===
+# === КЛЮЧИ ===
+API_KEY = "bg_7bd202760f36727cedf11a481dbca611"
+API_SECRET = "b6bd206dfbe827ee5b290604f6097d781ce5adabc3f215bba2380fb39c0e9711"
+API_PASSPHRASE = "Evgeniy84"
 TELEGRAM_TOKEN = "7630671081:AAG17gVyITruoH_CYreudyTBm5RTpvNgwMA"
 TELEGRAM_CHAT_ID = "5723086631"
 
-# === НАСТРОЙКИ ТОРГОВЛИ ===
-TRADE_SYMBOLS = ["BTC-USDT", "ETH-USDT", "SOL-USDT"]
-TRADE_AMOUNT = 50
-COOLDOWN_SECONDS = 3 * 60 * 60  # 3 часа
-PRICE_DROP_THRESHOLD = 0.01    # 1%
-TAKE_PROFIT = 0.015            # 1.5%
-STOP_LOSS = 0.01               # 1%
-CHECK_INTERVAL = 30            # секунд
+# === НАСТРОЙКИ ===
+TRADE_AMOUNT = 10.0
+SYMBOLS = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "XRPUSDT", "TRXUSDT", "PEPEUSDT", "BGBUSDT"]
+INTERVAL = "1m"
+TP_PERCENT = 1.5
+SL_PERCENT = 1.0
 
-cooldown = {}
-price_history = {}
-active_trades = {}
+app = Flask(__name__)
+positions_file = "short_positions.json"
+profit_file = "short_profit.json"
 
-# === TELEGRAM ===
-def send_telegram(message):
-    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-    try:
-        requests.post(url, data={"chat_id": TELEGRAM_CHAT_ID, "text": message})
-    except Exception as e:
-        print("❌ Ошибка Telegram:", e)
-
-# === ЗАГОЛОВКИ KuCoin ===
-def kucoin_headers(method, endpoint, body=""):
-    now = str(int(time.time() * 1000))
-    str_to_sign = now + method + endpoint + body
-    signature = base64.b64encode(hmac.new(API_SECRET.encode(), str_to_sign.encode(), hashlib.sha256).digest()).decode()
-    passphrase = base64.b64encode(hmac.new(API_SECRET.encode(), API_PASSPHRASE.encode(), hashlib.sha256).digest()).decode()
-    return {
-        "KC-API-KEY": API_KEY,
-        "KC-API-SIGN": signature,
-        "KC-API-TIMESTAMP": now,
-        "KC-API-PASSPHRASE": passphrase,
-        "KC-API-KEY-VERSION": "2",
+# === Bitget API ===
+def bitget_request(method, path, params=None, body=""):
+    timestamp = str(int(time.time() * 1000))
+    query = "" if not params else "&".join([f"{k}={v}" for k, v in sorted(params.items())])
+    pre_hash = timestamp + method + path + query + body
+    sign = hmac.new(API_SECRET.encode(), pre_hash.encode(), hashlib.sha256).hexdigest()
+    headers = {
+        "ACCESS-KEY": API_KEY,
+        "ACCESS-SIGN": sign,
+        "ACCESS-TIMESTAMP": timestamp,
+        "ACCESS-PASSPHRASE": API_PASSPHRASE,
         "Content-Type": "application/json"
     }
-
-# === ЦЕНА ===
-def get_price(symbol):
-    try:
-        url = f"https://api.kucoin.com/api/v1/market/orderbook/level1?symbol={symbol}"
-        response = requests.get(url)
-        return float(response.json()["data"]["price"])
-    except:
+    url = "https://api.bitget.com" + path
+    if method == "GET":
+        r = requests.get(url, headers=headers, params=params)
+    elif method == "POST":
+        r = requests.post(url, headers=headers, data=body)
+    else:
         return None
+    return r.json()
 
-# === ПОКУПКА ===
+def get_candles(symbol):
+    try:
+        params = {"symbol": symbol, "granularity": "1m", "limit": "100"}
+        res = bitget_request("GET", "/api/spot/v1/market/candles", params)
+        candles = res["data"]
+        close_prices = [float(c[4]) for c in candles][::-1]
+        return close_prices
+    except:
+        return []
+
+def calculate_ema(prices, period):
+    return list(np.array(pd.Series(prices).ewm(span=period, adjust=False).mean()))
+
+def send_telegram(text):
+    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+    requests.post(url, data={"chat_id": TELEGRAM_CHAT_ID, "text": text})
+
+def load_positions():
+    try:
+        with open(positions_file, "r") as f:
+            return json.load(f)
+    except:
+        return {}
+
+def save_positions(data):
+    with open(positions_file, "w") as f:
+        json.dump(data, f, indent=2)
+
+def load_profit():
+    try:
+        with open(profit_file, "r") as f:
+            return json.load(f)
+    except:
+        return {"total_profit": 0}
+
+def save_profit(data):
+    with open(profit_file, "w") as f:
+        json.dump(data, f, indent=2)
+
+def get_balance(symbol="USDT"):
+    res = bitget_request("GET", "/api/spot/v1/account/assets", {})
+    for item in res["data"]:
+        if item["coinName"] == symbol:
+            return float(item["available"])
+    return 0.0
+
 def place_order(symbol, side, size):
-    url = "https://api.kucoin.com/api/v1/orders"
-    body = {
-        "clientOid": str(int(time.time() * 1000)),
-        "side": side,
+    body = json.dumps({
         "symbol": symbol,
-        "type": "market",
+        "side": side,
+        "orderType": "market",
+        "force": "gtc",
         "size": str(size)
-    }
-    headers = kucoin_headers("POST", "/api/v1/orders", json.dumps(body))
-    response = requests.post(url, headers=headers, json=body)
-    return response.json()
+    })
+    return bitget_request("POST", "/api/spot/v1/trade/orders", body=body)
 
-# === ОСНОВНАЯ ЛОГИКА ===
-def check_market():
+def monitor():
+    global TRADE_AMOUNT
     while True:
-        for symbol in TRADE_SYMBOLS:
-            now = time.time()
-            if symbol in cooldown and now - cooldown[symbol] < COOLDOWN_SECONDS:
-                continue
+        positions = load_positions()
+        profit_data = load_profit()
+        for symbol in SYMBOLS:
+            try:
+                if symbol in positions:
+                    entry = positions[symbol]["entry"]
+                    amount = float(positions[symbol]["amount"])
+                    balance = get_balance(symbol.replace("USDT", ""))
+                    current_price = float(get_candles(symbol)[-1])
 
-            price = get_price(symbol)
-            if not price:
-                continue
+                    tp_price = entry * (1 - TP_PERCENT / 100)
+                    sl_price = entry * (1 + SL_PERCENT / 100)
 
-            if symbol not in price_history:
-                price_history[symbol] = price
-                continue
+                    if current_price <= tp_price or current_price >= sl_price:
+                        cost = amount * current_price
+                        result = (entry - current_price) * amount
+                        profit_data["total_profit"] += result
+                        save_profit(profit_data)
+                        place_order(symbol, "buy", amount)
+                        send_telegram(f"🔴 [SHORT] ✅ Закрыт SHORT {symbol} по {'TP' if current_price <= tp_price else 'SL'}\nПрибыль: {result:.4f} USDT")
+                        del positions[symbol]
+                        save_positions(positions)
+                        if result > 0:
+                            TRADE_AMOUNT += result
+                    continue
 
-            change = (price - price_history[symbol]) / price_history[symbol]
-            if change <= -PRICE_DROP_THRESHOLD:
-                size = round(TRADE_AMOUNT / price, 6)
-                result = place_order(symbol, "buy", size)
-                send_telegram(f"✅ Куплено {symbol} по {price}, объем: {size}")
-                active_trades[symbol] = {
-                    "buy_price": price,
-                    "size": size,
-                    "time": now
-                }
-                cooldown[symbol] = now
-                price_history[symbol] = price
-            elif symbol in active_trades:
-                buy_price = active_trades[symbol]["buy_price"]
-                if price >= buy_price * (1 + TAKE_PROFIT):
-                    size = active_trades[symbol]["size"]
-                    result = place_order(symbol, "sell", size)
-                    send_telegram(f"📈 Продано {symbol} по {price}, профит ✅")
-                    del active_trades[symbol]
-                elif price <= buy_price * (1 - STOP_LOSS):
-                    size = active_trades[symbol]["size"]
-                    result = place_order(symbol, "sell", size)
-                    send_telegram(f"📉 Продано {symbol} по {price}, стоп-лосс ❌")
-                    del active_trades[symbol]
+                prices = get_candles(symbol)
+                if len(prices) < 21:
+                    continue
+                ema9 = calculate_ema(prices, 9)[-1]
+                ema21 = calculate_ema(prices, 21)[-1]
 
-        time.sleep(CHECK_INTERVAL)
+                if ema9 < ema21:
+                    coin = symbol.replace("USDT", "")
+                    balance = get_balance(coin)
+                    if balance * prices[-1] < TRADE_AMOUNT:
+                        continue
 
-# === FLASK Keep-Alive ===
-app = Flask(__name__)
+                    qty = round(TRADE_AMOUNT / prices[-1], 5)
+                    place_order(symbol, "sell", qty)
+                    positions[symbol] = {"entry": prices[-1], "amount": qty}
+                    save_positions(positions)
+                    send_telegram(f"🔴 [SHORT] 🔻 SHORT {symbol} по цене {prices[-1]} на сумму {TRADE_AMOUNT} USDT")
+            except Exception as e:
+                send_telegram(f"🔴 [SHORT] Ошибка по {symbol}: {e}")
+        time.sleep(30)
 
 @app.route('/')
 def home():
-    return "✅ Бот запущен и работает"
+    return "Short bot is running!"
+
+@app.route('/profit', methods=["GET", "POST"])
+def profit():
+    data = load_profit()
+    return f"🔴 [SHORT] 📊 Текущая прибыль:" {data['total_profit']:.4f} USDT"
+
+def start():
+    threading.Thread(target=monitor).start()
+    schedule.every().day.at("20:47").do(lambda: send_telegram(f"🔴 [SHORT] 📊 Ежедневная прибыль:" {load_profit()['total_profit']:.4f} USDT"))
+    threading.Thread(target=lambda: schedule.run_pending()).start()
+    send_telegram("🔴 [SHORT] Бот успешно запущен на Render!")
+    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
 
 if __name__ == "__main__":
-    threading.Thread(target=check_market).start()
-    app.run(host="0.0.0.0", port=8080)
+    start()
