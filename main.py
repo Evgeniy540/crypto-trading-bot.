@@ -7,7 +7,7 @@ import os
 from flask import Flask
 
 # === НАСТРОЙКИ ===
-TELEGRAM_TOKEN = "7630671081:AAG17gVyITruoH_CYreudyTBm5RTpvNgwMA"
+TELEGRAM_TOKEN = "AAEnqRYtbaNHX8V5LtrST5e-SZh6iGkPi1Y"
 TELEGRAM_CHAT_ID = "5723086631"
 CHECK_INTERVAL = 30  # секунд
 ARBITRAGE_THRESHOLD = 0.25  # в процентах
