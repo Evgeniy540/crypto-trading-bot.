@@ -14,7 +14,7 @@ from flask import Flask
 
 # ========== ТВОИ ДАННЫЕ ==========
 TELEGRAM_BOT_TOKEN = "AAEnqRYtbaNHX8V5LtrST5e-SZh6iGkPi1Y"  # вставь свой токен
-TELEGRAM_CHAT_ID   = os.environ.get("TG_CHAT_ID", "auto")   # оставь "auto" или укажи chat_id
+TELEGRAM_CHAT_ID   = "8377721363"
 # =================================
 
 DEFAULT_SYMBOLS = [
